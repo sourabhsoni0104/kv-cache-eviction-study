@@ -1,121 +1,137 @@
-# Attention-Aware KV Cache Compression
+# KV Cache Eviction Study: Attention Sinks vs. Heavy Hitters
 
-A runnable solution to task 3 using **Qwen2.5-0.5B-Instruct**, real model weights,
-a cache we can inspect, and measured attention, perplexity, retrieval, and memory.
-Start with [the writeup](WRITEUP.md) and [the measured results](results/REPORT.md).
+How much of a transformer's KV cache can you throw away, and which entries
+should you keep? This project runs that experiment on a real model
+(**Qwen2.5-0.5B-Instruct**). It uses a hand-written Qwen2 forward pass whose cache
+you can inspect, and it measures attention patterns, perplexity, needle-in-a-haystack
+retrieval, positional (RoPE) handling and decode speed.
 
-## Deliverables
+It compares three bounded-cache policies:
 
-| Item | Implementation | Evidence |
+| Policy | Keeps | Based on |
 |---|---|---|
-| 3.1 Model, KV states, attention | `kvcache/model.py`, `cache.py` | HF reference harness and `results/correctness_float32.json` |
-| 3.2 Instrument attention first | `scripts/instrument_attention.py` | `results/attention_stats.json`; layer/head heatmaps in `plots/` |
-| 3.3 Three policies | `kvcache/policies.py` | Policy tests; loss-over-time and retrieval plots |
-| 3.4 Positions after eviction | `kvcache/rope.py`, `model.py` | Algebraic tests and `results/rope_ablation.json` with retained-needle checks |
-| 3.5 Long-document PPL + NIAH | `scripts/eval_ppl.py`, `eval_niah.py` | Two documents; full-cache control; individual answers and retention records |
-| 3.6 Quality/memory curves | `scripts/run_curve.py` | `plots/quality_vs_memory.png`, `results/curve.json` |
-| 3.7 Explanation and recommendations | `WRITEUP.md` | Measured findings, theory, and limitations |
-| Stretch (partial) | Per-KV-head token selection; configurable per-layer budgets | Regression tests; unequal per-head capacities are not implemented |
+| **Sliding window** | the newest *B* tokens | naive baseline |
+| **Sink-aware** | the first 4 tokens plus the newest *B − 4* | [StreamingLLM](https://arxiv.org/abs/2309.17453) |
+| **Heavy-hitter** | the recent half plus the keys with the most accumulated attention, chosen per KV head | [H2O](https://arxiv.org/abs/2306.14048) |
 
-## Setup
+![Quality versus KV-cache memory](plots/quality_vs_memory.png)
 
-Python 3.11 is tested. No training, API key, or paid inference service is needed.
+## Key findings
+
+All numbers are FP32 on an Apple GPU. Full tables are in [`results/REPORT.md`](results/REPORT.md).
+
+- **Attention sinks exist, and they don't depend on content.** On natural text, 30.5%
+  of attention mass lands on the first four tokens, compared with 0.70% under causal
+  uniform attention. The effect remains with random token IDs (29.8%) and with a
+  replaced prefix (30.4%). Token 0 receives 174× its uniform share.
+- **Losing the sinks is what breaks the sliding window, not the small budget.**
+  The full cache gives 17.69 PPL. At *B* = 128 (3 MiB instead of 72 MiB), sink-aware
+  scores 21.83 and heavy-hitter 21.70. Sliding window scores 157.4.
+- **Heavy-hitter has the best perplexity but not the best recall.** H2O has the lowest
+  PPL at every budget. However, at *B* = 1024 it retrieves 2/6 passkeys against 4/6 for
+  sink-aware. It evicts a needle before any query has attended to it.
+- **RoPE positions must be handled consistently.** Two modes keep positions
+  consistent: recompute and absolute. They reach 16.70 and 16.71 PPL with 6/6
+  retrieval. A deliberately "stale" implementation collapses to 275.0 PPL and 0/6
+  retrieval, even though the same needles are verified to remain in the cache.
+- **Compression also speeds up decoding.** At 4,096 tokens, bounded caches decode at
+  0.28–0.53× the full-cache time per token. This comes from one noisy run.
+
+| Budget | KV MiB | Sliding | Sink-aware | Heavy-hitter |
+|---:|---:|---:|---:|---:|
+| Full | 72.0 | 17.69 / 100% | — | — |
+| 128 | 3.0 | 157.43 / 0% | 21.83 / 0% | **21.70** / 0% |
+| 512 | 12.0 | 81.19 / 0% | 19.70 / 33% | **18.68** / 33% |
+| 1024 | 24.0 | 68.59 / 17% | 18.94 / **67%** | **18.06** / 33% |
+
+*Cells show perplexity / passkey retrieval accuracy. Retrieval uses 6 correlated
+trials per cell, so read it as a direction, not a precise rate.*
+
+The [write-up](WRITEUP.md) covers the methodology and controls. It also explains why
+sinks form, and gives recommendations for multi-turn agents and long-document
+summarizers.
+
+## What's inside
+
+```
+kvcache/
+  model.py       Manual Qwen2 forward pass that reuses HF weights and exposes attention probabilities
+  cache.py       Inspectable per-layer K/V cache with original positions and accumulated scores
+  policies.py    Sliding, StreamingLLM and H2O eviction policies
+  streaming.py   Bounded runner that evicts before attention, so the cache never exceeds the budget
+  rope.py        RoPE helpers for the recompute, absolute and stale position modes
+scripts/
+  instrument_attention.py   Sink mass, 90%-coverage and entropy for each layer and head, with controls
+  eval_ppl.py / eval_niah.py   Long-document perplexity and passkey retrieval
+  run_curve.py              Sweep of quality against memory
+  rope_ablation.py          Position-mode ablation with verified needle retention
+  benchmark.py              Decode latency and KV memory
+  report.py                 Builds results/REPORT.md and the plots from saved JSON
+tests/            Logits match HF exactly, plus checks on cache bounds, RoPE identities and policy indices
+results/, plots/  Every measured output, including per-trial answers and per-head retention
+```
+
+## Quick start
+
+Tested with Python 3.11. You don't need training, an API key or a paid service.
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python data/get_data.py
-```
+python data/get_data.py   # Pride and Prejudice + Frankenstein from Project Gutenberg
 
-The downloader strips Gutenberg headers/footers. Evaluation starts at each book's
-first prose sentence, excluding title pages and tables of contents. Token counts
-and SHA-256 hashes of the evaluated source texts are recorded in the curve JSON.
-
-The default model is `Qwen/Qwen2.5-0.5B-Instruct`. Download once while online:
-
-```bash
+# Download the model once (later runs work offline)
 python -c 'from huggingface_hub import snapshot_download; snapshot_download("Qwen/Qwen2.5-0.5B-Instruct")'
-```
 
-The reproduction driver uses that local cache in offline mode. Standalone scripts
-also accept a local model directory or another supported Qwen2 model via `--model`.
-Only ordinary Qwen2 RoPE is supported, not scaled RoPE or other architectures.
-
-## Reproduce
-
-```bash
-# Fast, meaningful regression tests; random tiny weights, no download.
+# Fast tests: tiny random weights, no model download needed
 python -m pytest -q
-python -m tests.test_correctness
 
-# Entire measured configuration: Apple GPU. Use DEVICE=cpu or DEVICE=cuda as appropriate.
+# Full measured suite (use DEVICE=cpu or DEVICE=cuda off Apple silicon)
 DEVICE=mps bash run_all.sh
-
-# Resume individual stages after a failure.
-python -m scripts.complete --stages attention,curve,rope,benchmark --device mps
-python -m scripts.report
 ```
 
-The measured suite uses full precision on Apple GPU, attention over 2,048 tokens,
-two 3,072-token documents, 2,048-token retrieval prompts, budgets
-128/256/512/1024/2048, three needle depths, and two paired passkeys per depth.
-Stage logs are saved in `results/logs/`; the curve JSON is checkpointed after
-every configuration and has a completion flag. Runtime depends on hardware.
-
-Standalone examples:
+Individual experiments:
 
 ```bash
 python -m scripts.instrument_attention --n_tokens 2048
-python -m scripts.eval_ppl --policy streaming --budget 512
-python -m scripts.eval_niah --policy h2o --budget 512 --ctx 2048
+python -m scripts.eval_ppl   --policy streaming --budget 512
+python -m scripts.eval_niah  --policy h2o --budget 512 --ctx 2048
 python -m scripts.rope_ablation --policy streaming --budget 512 --ctx 2048
-python -m scripts.run_curve --texts data/pride_and_prejudice.txt,data/frankenstein.txt --budgets 128,256,512,1024,2048 --n_tokens 3072 --ctx 2048
+python -m scripts.run_curve --texts data/pride_and_prejudice.txt,data/frankenstein.txt \
+    --budgets 128,256,512,1024,2048 --n_tokens 3072 --ctx 2048
 ```
 
-For an end-to-end script smoke test, pass `--model tiny` with an existing text
-file. Tiny weights verify plumbing only; their quality scores are not evidence.
-Keep NIAH contexts at least 512 tokens and attention contexts at least 2 tokens.
-Do not mix tiny smoke outputs with the measured result directory.
+If a long run fails, resume it with
+`python -m scripts.complete --stages attention,curve,rope,benchmark --device mps`.
+Then rebuild the report with `python -m scripts.report`.
 
-## Cache and position contract
+## Design notes
 
-- Batch size 1. `model.hf` exposes the standard HF `past_key_values` API.
-  `runner.cache.layers[i]` exposes our K, V, original positions, and scores.
-- `recompute` stores **pre-RoPE** keys and rotates retained keys at contiguous
-  cache positions before attention. These tensors are not directly interchangeable
-  with HF's post-RoPE cache.
-- `absolute` consistently uses original positions, preserving gaps.
-  `stale` intentionally mixes cached insertion-time rotations with compacted
-  query positions and exists only as a negative control.
-- Eviction reserves incoming space **before attention**, so every layer's
-  materialized cache has at most its budget's entries. `chunk_size=32` is a
-  block approximation; use 1 for online eviction. The chunk is capped so each
-  reservation keeps the policy's protected entries: the four sinks for streaming,
-  and at least half the budget for H2O, so a large chunk cannot erase every
-  heavy hitter. A budget of only a few entries can still leave no room for them.
-- `prefill()` retains only the final logits, and `feed_nll()` computes losses
-  by chunk. Diagnostic `feed()` intentionally retains all logits.
-- Cache-byte measurements include K and V. Position/score metadata is reported
-  separately. Weights, temporary copies, and attention workspaces are additional.
-- Per-layer capacities can be supplied as
-  `StreamingRunner(model, make_policy("h2o"), layer_budgets=[...] )`, with one
-  positive capacity per layer. Compare allocations at equal summed capacity.
-- Full precision is the validated configuration. Half precision is experimental:
-  the Apple GPU run showed larger positional-shift rounding differences and was
-  excluded from the reported quality experiments.
+- **Exact budget.** Each incoming block's space is reserved *before* attention, so
+  no layer's cache ever holds more than *B* entries. The default eviction block is
+  32 tokens. Set `chunk_size=1` for fully online eviction.
+- **Per-head selection.** H2O sums scores across the query heads that share a KV
+  head (GQA). Each KV head in each layer then keeps its own set of entries.
+- **Position modes.** In `recompute` mode, keys are stored before RoPE and rotated
+  at compacted positions (StreamingLLM-style). `absolute` keeps the original
+  positions, including the gaps left by eviction. `stale` exists only as a negative
+  control.
+- **Per-layer budgets.** Pass a list such as
+  `StreamingRunner(model, make_policy("h2o"), layer_budgets=[...])`.
+- **Memory accounting.** Reported KV bytes count K and V only (24 KiB per token in
+  FP32). Position and score metadata are reported separately.
 
-## Read the evidence
+## Limitations
 
-![Quality versus cache memory](plots/quality_vs_memory.png)
-
-[Loss over time](plots/perplexity_over_time.png) shows the sliding-window failure;
-[retrieval by depth](plots/retrieval_by_depth.png) shows when facts disappear.
-The RoPE experiment verifies that every needle is physically retained in every
-layer/KV head before it attributes differences to position handling.
+This is research code: batch size 1, Qwen2 models with standard RoPE only, eager
+attention, and a block-level eviction approximation. It is not a serving engine.
+FP32 is the validated precision. FP16 failed a positional tolerance check, so it
+was excluded from the results. The retrieval benchmark uses repeated filler and a
+small number of keys. [WRITEUP.md](WRITEUP.md#limits-and-stretch-work) describes
+these limits in full.
 
 ## References
 
-- [StreamingLLM — Xiao et al.](https://arxiv.org/abs/2309.17453)
-- [H2O — Zhang et al.](https://arxiv.org/abs/2306.14048)
-- [StreamingLLM reference implementation](https://github.com/mit-han-lab/streaming-llm)
+- Xiao et al., *Efficient Streaming Language Models with Attention Sinks* (2023). [arXiv:2309.17453](https://arxiv.org/abs/2309.17453)
+- Zhang et al., *H2O: Heavy-Hitter Oracle for Efficient Generative Inference of LLMs* (2023). [arXiv:2306.14048](https://arxiv.org/abs/2306.14048)
+- [mit-han-lab/streaming-llm](https://github.com/mit-han-lab/streaming-llm)
