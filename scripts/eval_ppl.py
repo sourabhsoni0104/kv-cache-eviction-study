@@ -1,4 +1,4 @@
-"""Item 3.5a - perplexity on a long document under a fixed KV budget.
+"""Perplexity on a long document under a fixed KV budget.
 
 Reports overall PPL and PPL restricted to tokens *after* the first eviction
 (the only region where policies differ from the full cache).

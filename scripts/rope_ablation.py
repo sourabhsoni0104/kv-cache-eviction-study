@@ -1,4 +1,4 @@
-"""Item 3.4 - does position handling after eviction matter?
+"""Does position handling after eviction matter?
 
 Same policy and budget, three ways of handling RoPE:
   recompute (ours, correct) / absolute (original positions) / stale (HF-slicing bug).

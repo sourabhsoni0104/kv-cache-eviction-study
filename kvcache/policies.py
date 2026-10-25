@@ -1,4 +1,4 @@
-"""Eviction policies (item 3.3). Each returns, per KV head, the sorted cache
+"""Eviction policies. Each returns, per KV head, the sorted cache
 indices to KEEP so the cache shrinks to `budget` entries.
 
   sliding   : keep the most recent `budget` tokens. Naive baseline; drops the

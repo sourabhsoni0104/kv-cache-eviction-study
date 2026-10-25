@@ -1,6 +1,6 @@
 # Attention-Aware KV Cache Compression
 
-## What this submission establishes
+## What this project establishes
 
 This project compares three ways to retain a bounded transformer KV cache:
 a sliding window, an explicit sink-plus-window policy, and accumulated-attention
@@ -41,7 +41,7 @@ All numbers are FP32 on Apple GPU and copied from the report.
 These counts come from six correlated trials per configuration; they show
 direction, not precise rates.
 
-## 3.1 Model and correctness
+## Model and correctness
 
 The manual Qwen2 forward reuses the Hugging Face embeddings, attention projections,
 MLP, normalization, and output weights. Its attention callback exposes each
@@ -61,7 +61,7 @@ matching chunk sizes reduced manual-versus-HF error below 0.05. However, the
 contiguous-position-shift check still differed by 0.225, so FP16 was excluded
 from the reported experiments. Numerical tolerance is not a quality guarantee.
 
-## 3.2 Instrument attention before choosing an eviction policy
+## Instrument attention before choosing an eviction policy
 
 For each of 24 layers and 14 query heads, the instrumentation measures:
 
@@ -86,7 +86,7 @@ after prefix replacement supports content-insensitive sink behavior in these
 inputs; a finite set of controls cannot establish independence for every possible
 content. Global means can conceal heads that specialize in different patterns.
 
-## 3.3 Policies and a fixed budget
+## Policies and a fixed budget
 
 **Sliding window:** retain the newest available entries. It removes the initial
 sinks once the window advances, and also removes older facts.
@@ -107,7 +107,7 @@ new entries then receive their initial scores. This is a block approximation,
 not a claim of reproducing the papers' exact kernels. With block size 1 it makes
 online decisions. Every policy in the measured sweep uses the same block size.
 
-## 3.4 Position handling after eviction
+## Position handling after eviction
 
 RoPE rotates queries and keys with their position. Its inner product depends on
 the difference of those positions. Eviction alone does not necessarily invalidate
@@ -142,7 +142,7 @@ The report gives the actual PPL and retrieval outcomes. Fluent output alone
 cannot validate RoPE; even equal retrieval accuracy on a small set does not
 replace the positional identity test.
 
-## 3.5–3.6 Quality versus memory
+## Quality versus memory
 
 Perplexity is evaluated on prose from *Pride and Prejudice* and *Frankenstein*,
 3,072 tokens each. Every curve point, including full cache, scores the same
@@ -182,7 +182,7 @@ different prompt length. Decode steps also add entries to the unbounded
 reference. Measured cache maxima and metadata bytes are saved alongside the
 theoretical curve coordinates.
 
-## 3.7 Why sinks exist, and what to use
+## Why sinks exist, and what to use
 
 **Why initial tokens become sinks.** Softmax normalizes every attention row to
 unit mass. A head can learn a reliable place to send attention that does not
@@ -222,7 +222,7 @@ attention popularity is not summary importance. Validate coverage and factual
 recall directly; perplexity does not measure either. StreamingLLM is suitable
 for producing local chunk summaries when a separate mechanism combines them.
 
-## Limits and stretch work
+## Limits and future work
 
 The implementation is research code for one Qwen2 sequence, with eager attention
 and a block eviction approximation. It is not an optimized serving engine.
@@ -233,8 +233,7 @@ decode token, not a production throughput claim.
 
 Per-KV-head token selection and unequal per-layer capacities are implemented and
 tested. Unequal capacities between heads within a layer, learned allocation,
-and a quality study of budget allocation remain outside the required deliverables;
-the stretch is therefore partial. The FP16 exploration failed a positional
+and a quality study of budget allocation are not implemented yet. The FP16 exploration failed a positional
 numerical tolerance check and is explicitly excluded from the reported results.
 
 ## Reproduction

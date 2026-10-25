@@ -1,4 +1,4 @@
-"""Item 3.6 - quality vs. memory curve across cache budgets for all three policies.
+"""Quality vs. memory curve across cache budgets for all three policies.
 
 Quality = perplexity on a long document (post-budget region) and needle-in-a-
 haystack accuracy. Memory = KV-cache bytes at the budget (theoretical, exact for
@@ -44,9 +44,13 @@ def plot(res, out_dir="plots"):
     axes[0].set_xlabel("KV cache memory (MiB)"); axes[0].set_ylabel("perplexity (identical evaluation region)")
     axes[1].set_xlabel("KV cache memory (MiB)"); axes[1].set_ylabel("needle retrieval accuracy")
     axes[1].set_ylim(-0.05, 1.05)
+    # Log-scale default ticks overlap at these values; label the measured budgets instead.
+    budget_mem = [r["kv_mb"] for r in res["rows"][POLICY_NAMES[0]]]
     for ax in axes:
+        ax.set_xticks(budget_mem, labels=[f"{m:g}" for m in budget_mem])
+        ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
         ax.legend(); ax.grid(alpha=0.3)
-    fig.suptitle("quality vs. KV-cache memory (item 3.6)")
+    fig.suptitle("Quality vs. KV-cache memory")
     fig.savefig(os.path.join(out_dir, "quality_vs_memory.png"), dpi=130, bbox_inches="tight")
     print("saved", os.path.join(out_dir, "quality_vs_memory.png"))
 

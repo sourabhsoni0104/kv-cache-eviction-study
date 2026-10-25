@@ -127,7 +127,7 @@ This is research code: batch size 1, Qwen2 models with standard RoPE only, eager
 attention, and a block-level eviction approximation. It is not a serving engine.
 FP32 is the validated precision. FP16 failed a positional tolerance check, so it
 was excluded from the results. The retrieval benchmark uses repeated filler and a
-small number of keys. [WRITEUP.md](WRITEUP.md#limits-and-stretch-work) describes
+small number of keys. [WRITEUP.md](WRITEUP.md#limits-and-future-work) describes
 these limits in full.
 
 ## References

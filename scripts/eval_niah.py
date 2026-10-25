@@ -1,10 +1,10 @@
-"""Item 3.5b - needle-in-a-haystack (passkey) retrieval under a fixed KV budget.
+"""Needle-in-a-haystack (passkey) retrieval under a fixed KV budget.
 
 A 5-digit passkey is buried at a chosen depth inside filler text; after
 prefilling the whole context with eviction, the model must complete
 "The secret passkey is". Perplexity barely notices a missing fact - this does.
 
-Also the targeted test for item 3.4: run with --rope_mode stale vs recompute
+Also the targeted RoPE test: run with --rope_mode stale vs recompute
 and a needle that *survives* eviction (e.g. depth 0.95 with streaming, or any
 depth with h2o). If positions are handled wrong the fact is in the cache but
 cannot be read out.

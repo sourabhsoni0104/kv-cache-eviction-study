@@ -1,7 +1,7 @@
 """A hand-written forward pass for Qwen2-family models (Qwen2.5-0.5B etc.).
 
 We reuse the HuggingFace weights but re-implement the decoder so that we own the
-KV cache (item 3.1): we can store pre-RoPE keys, evict arbitrary entries per head,
+KV cache: we can store pre-RoPE keys, evict arbitrary entries per head,
 and receive the attention probabilities of every layer through a callback.
 Correctness is checked against the HF eager implementation in tests/.
 """

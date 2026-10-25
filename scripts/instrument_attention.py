@@ -1,4 +1,4 @@
-"""Item 3.2 - instrument attention BEFORE designing eviction.
+"""Instrument attention BEFORE designing eviction.
 
 Runs one long prefill and, per layer/head, records:
   * sink_share      : fraction of each query's attention mass on the first 4 keys
